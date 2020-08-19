@@ -1,0 +1,20 @@
+[package]
+name = "bitmex-md"
+version = "0.1.0"
+authors = ["ross <rossbennett34@gmail.com>"]
+edition = "2018"
+description = "BitMex market data feed handler library"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+# TODO: change llws dependency when published to crates.io or tagged on github
+llws = {path = "../llws"}
+
+[dev-dependencies]
+url = "2.1.0"
+native-tls = "0.2"
+epoll-rs = {path = "../epoll-rs"}
+libc = "0.2"
