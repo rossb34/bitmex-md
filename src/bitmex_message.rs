@@ -1,4 +1,3 @@
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -176,6 +175,13 @@ pub struct TradeEntry {
     foreign_notional: f64,
 }
 
+// MD Subscription Request for Bitmex
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MarketDataSubscriptionRequest {
+    pub op: String,
+    pub args: Vec<String>,
+}
+
 pub enum BitmexMessage {
     Update(UpdateMessage),
     Delete(DeleteMessage),
@@ -191,41 +197,41 @@ pub enum BitmexMessage {
 pub enum ParseError {
     Invalid,
     InvalidAction,
-    InvalidTable
+    InvalidTable,
 }
 
-fn parse(message: &str) -> Result<BitmexMessage, ParseError> {
+pub fn parse(message: &[u8]) -> Result<BitmexMessage, ParseError> {
     // peek at the type found at the beginning of the message
     let peek_type = &message[2..5];
     match peek_type {
         // info: info message type received when connection is established
-        "inf" => {
-            let info_msg: InfoMessage = serde_json::from_str(&message).unwrap();
+        b"inf" => {
+            let info_msg: InfoMessage = serde_json::from_slice(&message).unwrap();
             Ok(BitmexMessage::Info(info_msg))
         }
         // success: success message received when a subscription request is successful
-        "suc" => {
-            let subscribe_msg: SubscribeMessage = serde_json::from_str(&message).unwrap();
+        b"suc" => {
+            let subscribe_msg: SubscribeMessage = serde_json::from_slice(&message).unwrap();
             Ok(BitmexMessage::Subscribe(subscribe_msg))
         }
         // table: table message received for a channel (e.g. orderBookL2, trade)
-        "tab" => {
+        b"tab" => {
             // peek at the table type
             let peek_table = &message[10..13];
             match peek_table {
                 // trade table
-                "tra" => {
-                    let peek_action = & message[27..30];
+                b"tra" => {
+                    let peek_action = &message[27..30];
                     match peek_action {
                         // partial: trade snapshot (schema + last trade)
-                        "par" => {
+                        b"par" => {
                             let trade_snapshot: TradeSnapshotMessage =
-                                serde_json::from_str(&message).unwrap();
+                                serde_json::from_slice(&message).unwrap();
                             Ok(BitmexMessage::TradeSnapshot(trade_snapshot))
                         }
                         // insert: trade
-                        "ins" => {
-                            let trade: TradeMessage = serde_json::from_str(&message).unwrap();
+                        b"ins" => {
+                            let trade: TradeMessage = serde_json::from_slice(&message).unwrap();
                             Ok(BitmexMessage::Trade(trade))
                         }
                         _ => {
@@ -235,28 +241,29 @@ fn parse(message: &str) -> Result<BitmexMessage, ParseError> {
                     }
                 }
                 // order book l2 table
-                "ord" => {
+                b"ord" => {
                     // peek at the action type to determine the message type to parse
                     let peek_action = &message[33..36];
                     match peek_action {
                         // partial: order book snapshot message
-                        "par" => {
-                            let snapshot: SnapshotMessage = serde_json::from_str(&message).unwrap();
+                        b"par" => {
+                            let snapshot: SnapshotMessage =
+                                serde_json::from_slice(&message).unwrap();
                             Ok(BitmexMessage::Snapshot(snapshot))
                         }
                         // update
-                        "upd" => {
-                            let update: UpdateMessage = serde_json::from_str(&message).unwrap();
+                        b"upd" => {
+                            let update: UpdateMessage = serde_json::from_slice(&message).unwrap();
                             Ok(BitmexMessage::Update(update))
                         }
                         // insert
-                        "ins" => {
-                            let insert: InsertMessage = serde_json::from_str(&message).unwrap();
+                        b"ins" => {
+                            let insert: InsertMessage = serde_json::from_slice(&message).unwrap();
                             Ok(BitmexMessage::Insert(insert))
                         }
                         // delete
-                        "del" => {
-                            let delete: DeleteMessage = serde_json::from_str(&message).unwrap();
+                        b"del" => {
+                            let delete: DeleteMessage = serde_json::from_slice(&message).unwrap();
                             Ok(BitmexMessage::Delete(delete))
                         }
                         _ => {
@@ -277,12 +284,12 @@ fn parse(message: &str) -> Result<BitmexMessage, ParseError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::bitmex_message::{BitmexMessage, parse};
+    use crate::bitmex_message::{parse, BitmexMessage};
 
     #[test]
     fn parse_info_message() {
-        let text = "{\"info\":\"Welcome to the BitMEX Realtime API.\",\"version\":\"2020-06-30T21:03:12.000Z\",\"timestamp\":\"2020-07-08T11:00:02.855Z\",\"docs\":\"https://www.bitmex.com/app/wsAPI\",\"limit\":{\"remaining\":39}}";
-        let parsed_message = parse(&text);
+        let text = b"{\"info\":\"Welcome to the BitMEX Realtime API.\",\"version\":\"2020-06-30T21:03:12.000Z\",\"timestamp\":\"2020-07-08T11:00:02.855Z\",\"docs\":\"https://www.bitmex.com/app/wsAPI\",\"limit\":{\"remaining\":39}}";
+        let parsed_message = parse(&text[..]);
         match parsed_message {
             Ok(m) => match m {
                 BitmexMessage::Info(info_msg) => {
@@ -296,8 +303,8 @@ mod tests {
 
     #[test]
     fn parse_subscribe_message() {
-        let text = "{\"success\":true,\"subscribe\":\"orderBookL2:XBTUSD\",\"request\":{\"op\":\"subscribe\",\"args\":[\"orderBookL2:XBTUSD\"]}}";
-        let parsed_message = parse(&text);
+        let text = b"{\"success\":true,\"subscribe\":\"orderBookL2:XBTUSD\",\"request\":{\"op\":\"subscribe\",\"args\":[\"orderBookL2:XBTUSD\"]}}";
+        let parsed_message = parse(text.as_ref());
         match parsed_message {
             Ok(m) => match m {
                 BitmexMessage::Subscribe(subscribe_msg) => {
@@ -312,8 +319,8 @@ mod tests {
 
     #[test]
     fn parse_snapshot_message() {
-        let text = "{\"table\":\"orderBookL2\",\"action\":\"partial\",\"keys\":[\"symbol\",\"id\",\"side\"],\"types\":{\"symbol\":\"symbol\",\"id\":\"long\",\"side\":\"symbol\",\"size\":\"long\",\"price\":\"float\"},\"foreignKeys\":{\"symbol\":\"instrument\",\"side\":\"side\"},\"attributes\":{\"symbol\":\"parted\",\"id\":\"sorted\"},\"filter\":{\"symbol\":\"XBTUSD\"},\"data\":[{\"symbol\":\"XBTUSD\",\"id\":8799070500,\"side\":\"Sell\",\"size\":384243,\"price\":9295},{\"symbol\":\"XBTUSD\",\"id\":8799070550,\"side\":\"Sell\",\"size\":62442,\"price\":9294.5},{\"symbol\":\"XBTUSD\",\"id\":8799070600,\"side\":\"Sell\",\"size\":162802,\"price\":9294},{\"symbol\":\"XBTUSD\",\"id\":8799070650,\"side\":\"Sell\",\"size\":67377,\"price\":9293.5},{\"symbol\":\"XBTUSD\",\"id\":8799070700,\"side\":\"Sell\",\"size\":19978,\"price\":9293},{\"symbol\":\"XBTUSD\",\"id\":8799070750,\"side\":\"Sell\",\"size\":56948,\"price\":9292.5},{\"symbol\":\"XBTUSD\",\"id\":8799070800,\"side\":\"Sell\",\"size\":82020,\"price\":9292},{\"symbol\":\"XBTUSD\",\"id\":8799070850,\"side\":\"Sell\",\"size\":832,\"price\":9291.5},{\"symbol\":\"XBTUSD\",\"id\":8799070900,\"side\":\"Sell\",\"size\":1186665,\"price\":9291},{\"symbol\":\"XBTUSD\",\"id\":8799070950,\"side\":\"Buy\",\"size\":1023444,\"price\":9290.5},{\"symbol\":\"XBTUSD\",\"id\":8799071000,\"side\":\"Buy\",\"size\":23490,\"price\":9290},{\"symbol\":\"XBTUSD\",\"id\":8799071050,\"side\":\"Buy\",\"size\":155749,\"price\":9289.5},{\"symbol\":\"XBTUSD\",\"id\":8799071100,\"side\":\"Buy\",\"size\":10723,\"price\":9289},{\"symbol\":\"XBTUSD\",\"id\":8799071150,\"side\":\"Buy\",\"size\":2113,\"price\":9288.5}]}";
-        let parsed_message = parse(&text);
+        let text = b"{\"table\":\"orderBookL2\",\"action\":\"partial\",\"keys\":[\"symbol\",\"id\",\"side\"],\"types\":{\"symbol\":\"symbol\",\"id\":\"long\",\"side\":\"symbol\",\"size\":\"long\",\"price\":\"float\"},\"foreignKeys\":{\"symbol\":\"instrument\",\"side\":\"side\"},\"attributes\":{\"symbol\":\"parted\",\"id\":\"sorted\"},\"filter\":{\"symbol\":\"XBTUSD\"},\"data\":[{\"symbol\":\"XBTUSD\",\"id\":8799070500,\"side\":\"Sell\",\"size\":384243,\"price\":9295},{\"symbol\":\"XBTUSD\",\"id\":8799070550,\"side\":\"Sell\",\"size\":62442,\"price\":9294.5},{\"symbol\":\"XBTUSD\",\"id\":8799070600,\"side\":\"Sell\",\"size\":162802,\"price\":9294},{\"symbol\":\"XBTUSD\",\"id\":8799070650,\"side\":\"Sell\",\"size\":67377,\"price\":9293.5},{\"symbol\":\"XBTUSD\",\"id\":8799070700,\"side\":\"Sell\",\"size\":19978,\"price\":9293},{\"symbol\":\"XBTUSD\",\"id\":8799070750,\"side\":\"Sell\",\"size\":56948,\"price\":9292.5},{\"symbol\":\"XBTUSD\",\"id\":8799070800,\"side\":\"Sell\",\"size\":82020,\"price\":9292},{\"symbol\":\"XBTUSD\",\"id\":8799070850,\"side\":\"Sell\",\"size\":832,\"price\":9291.5},{\"symbol\":\"XBTUSD\",\"id\":8799070900,\"side\":\"Sell\",\"size\":1186665,\"price\":9291},{\"symbol\":\"XBTUSD\",\"id\":8799070950,\"side\":\"Buy\",\"size\":1023444,\"price\":9290.5},{\"symbol\":\"XBTUSD\",\"id\":8799071000,\"side\":\"Buy\",\"size\":23490,\"price\":9290},{\"symbol\":\"XBTUSD\",\"id\":8799071050,\"side\":\"Buy\",\"size\":155749,\"price\":9289.5},{\"symbol\":\"XBTUSD\",\"id\":8799071100,\"side\":\"Buy\",\"size\":10723,\"price\":9289},{\"symbol\":\"XBTUSD\",\"id\":8799071150,\"side\":\"Buy\",\"size\":2113,\"price\":9288.5}]}";
+        let parsed_message = parse(&text.as_ref());
         match parsed_message {
             Ok(m) => match m {
                 BitmexMessage::Snapshot(snapshot_message) => {
@@ -328,8 +335,8 @@ mod tests {
 
     #[test]
     fn parse_insert_message() {
-        let text = "{\"table\":\"orderBookL2\",\"action\":\"insert\",\"data\":[{\"symbol\":\"XBTUSD\",\"id\":8798141850,\"side\":\"Sell\",\"size\":1,\"price\":18581.5}]}";
-        let parsed_message = parse(&text);
+        let text = b"{\"table\":\"orderBookL2\",\"action\":\"insert\",\"data\":[{\"symbol\":\"XBTUSD\",\"id\":8798141850,\"side\":\"Sell\",\"size\":1,\"price\":18581.5}]}";
+        let parsed_message = parse(&text.as_ref());
         match parsed_message {
             Ok(m) => match m {
                 BitmexMessage::Insert(insert_message) => {
@@ -350,8 +357,8 @@ mod tests {
 
     #[test]
     fn parse_delete_message() {
-        let text = "{\"table\":\"orderBookL2\",\"action\":\"delete\",\"data\":[{\"symbol\":\"XBTUSD\",\"id\":8799594200,\"side\":\"Buy\"}]}";
-        let parsed_message = parse(&text);
+        let text = b"{\"table\":\"orderBookL2\",\"action\":\"delete\",\"data\":[{\"symbol\":\"XBTUSD\",\"id\":8799594200,\"side\":\"Buy\"}]}";
+        let parsed_message = parse(&text.as_ref());
         match parsed_message {
             Ok(m) => match m {
                 BitmexMessage::Delete(delete_message) => {
@@ -370,8 +377,8 @@ mod tests {
 
     #[test]
     fn parse_update_message() {
-        let text = "{\"table\":\"orderBookL2\",\"action\":\"update\",\"data\":[{\"symbol\":\"XBTUSD\",\"id\":8799065200,\"side\":\"Sell\",\"size\":182112},{\"symbol\":\"XBTUSD\",\"id\":8799065250,\"side\":\"Sell\",\"size\":19575}]}";
-        let parsed_message = parse(&text);
+        let text = b"{\"table\":\"orderBookL2\",\"action\":\"update\",\"data\":[{\"symbol\":\"XBTUSD\",\"id\":8799065200,\"side\":\"Sell\",\"size\":182112},{\"symbol\":\"XBTUSD\",\"id\":8799065250,\"side\":\"Sell\",\"size\":19575}]}";
+        let parsed_message = parse(&text.as_ref());
         match parsed_message {
             Ok(m) => match m {
                 BitmexMessage::Update(update_message) => {
@@ -397,9 +404,9 @@ mod tests {
 
     #[test]
     fn parse_trade_snapshot() {
-        let text = "{\"table\":\"trade\",\"action\":\"partial\",\"keys\":[],\"types\":{\"timestamp\":\"timestamp\",\"symbol\":\"symbol\",\"side\":\"symbol\",\"size\":\"long\",\"price\":\"float\",\"tickDirection\":\"symbol\",\"trdMatchID\":\"guid\",\"grossValue\":\"long\",\"homeNotional\":\"float\",\"foreignNotional\":\"float\"},\"foreignKeys\":{\"symbol\":\"instrument\",\"side\":\"side\"},\"attributes\":{\"timestamp\":\"sorted\",\"symbol\":\"grouped\"},\"filter\":{\"symbol\":\"XBTUSD\"},\"data\":[{\"timestamp\":\"2020-07-19T19:42:57.047Z\",\"symbol\":\"XBTUSD\",\"side\":\"Sell\",\"size\":446,\"price\":9155.5,\"tickDirection\":\"MinusTick\",\"trdMatchID\":\"3a90d7b2-8b2b-556f-0dc5-bfde052e240b\",\"grossValue\":4871212,\"homeNotional\":0.04871212,\"foreignNotional\":446}]}";
+        let text = b"{\"table\":\"trade\",\"action\":\"partial\",\"keys\":[],\"types\":{\"timestamp\":\"timestamp\",\"symbol\":\"symbol\",\"side\":\"symbol\",\"size\":\"long\",\"price\":\"float\",\"tickDirection\":\"symbol\",\"trdMatchID\":\"guid\",\"grossValue\":\"long\",\"homeNotional\":\"float\",\"foreignNotional\":\"float\"},\"foreignKeys\":{\"symbol\":\"instrument\",\"side\":\"side\"},\"attributes\":{\"timestamp\":\"sorted\",\"symbol\":\"grouped\"},\"filter\":{\"symbol\":\"XBTUSD\"},\"data\":[{\"timestamp\":\"2020-07-19T19:42:57.047Z\",\"symbol\":\"XBTUSD\",\"side\":\"Sell\",\"size\":446,\"price\":9155.5,\"tickDirection\":\"MinusTick\",\"trdMatchID\":\"3a90d7b2-8b2b-556f-0dc5-bfde052e240b\",\"grossValue\":4871212,\"homeNotional\":0.04871212,\"foreignNotional\":446}]}";
         // \"trdMatchID\":\"3a90d7b2-8b2b-556f-0dc5-bfde052e240b\",\"grossValue\":4871212,\"homeNotional\":0.04871212,\"foreignNotional\":446}]}";
-        let parsed_message = parse(&text);
+        let parsed_message = parse(&text.as_ref());
         match parsed_message {
             Ok(m) => match m {
                 BitmexMessage::TradeSnapshot(trade_snapshot_message) => {
@@ -425,8 +432,8 @@ mod tests {
 
     #[test]
     fn parse_trade_update() {
-        let text = "{\"table\":\"trade\",\"action\":\"insert\",\"data\":[{\"timestamp\":\"2020-07-19T19:43:21.401Z\",\"symbol\":\"XBTUSD\",\"side\":\"Sell\",\"size\":16000,\"price\":9155.5,\"tickDirection\":\"ZeroMinusTick\",\"trdMatchID\":\"ec06df7b-0dc0-8181-f693-c9f39fb57e56\",\"grossValue\":174752000,\"homeNotional\":1.74752,\"foreignNotional\":16000}]}";
-        let parsed_message = parse(&text);
+        let text = b"{\"table\":\"trade\",\"action\":\"insert\",\"data\":[{\"timestamp\":\"2020-07-19T19:43:21.401Z\",\"symbol\":\"XBTUSD\",\"side\":\"Sell\",\"size\":16000,\"price\":9155.5,\"tickDirection\":\"ZeroMinusTick\",\"trdMatchID\":\"ec06df7b-0dc0-8181-f693-c9f39fb57e56\",\"grossValue\":174752000,\"homeNotional\":1.74752,\"foreignNotional\":16000}]}";
+        let parsed_message = parse(&text.as_ref());
         match parsed_message {
             Ok(m) => match m {
                 BitmexMessage::Trade(trade_message) => {
